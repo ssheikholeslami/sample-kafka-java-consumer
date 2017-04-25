@@ -1,5 +1,6 @@
 import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.WakeupException;
 import org.apache.log4j.Logger;
 import org.json.simple.JSONObject;
 
@@ -13,7 +14,25 @@ public class ClientRunner {
     private static Map<TopicPartition, OffsetAndMetadata> currentOffsets;
     private static KafkaConsumer<String, String> consumer;
 
+
+
     public static void main(String[] args) {
+
+
+        final Thread mainThread = Thread.currentThread();
+
+        Runtime.getRuntime().addShutdownHook(new Thread(){
+            public void run(){
+                System.out.println("Starting shutdown");
+                consumer.wakeup();
+                try{
+                    mainThread.join();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+
+        });
 
         HashMap<String, Integer> custCountryMap = new HashMap<String, Integer>();
 
@@ -57,13 +76,21 @@ public class ClientRunner {
 
                     try {
                         consumer.commitSync(currentOffsets); //This is a synchronous commits and will block until either the commit succeeds or an unrecoverable error is encountered
-                    } catch (CommitFailedException e) {
+                    }
+                    catch (WakeupException we){
+                        //ignore, shutting down
+                    }
+                    catch (CommitFailedException e) {
                         log.error("Commit Failed, " + e);
                     }
                 } else if (args[1].equalsIgnoreCase("async")) {
                     try {
                         consumer.commitAsync();
-                    } catch (Exception e) {
+                    }
+                    catch (WakeupException we){
+                        //ignore, shutting down
+                    }
+                    catch (Exception e) {
                         log.error("Commit Failed, " + e);
                     }
                 } else if (args[1].equalsIgnoreCase("async-callback")) {
@@ -86,6 +113,7 @@ public class ClientRunner {
                 consumer.commitSync(currentOffsets); //make sure the commits are received by the broker before shutdown
             } finally {
                 consumer.close();
+                System.out.println("Shutting Down...");
             }
         }
 
