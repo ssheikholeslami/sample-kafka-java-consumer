@@ -3,16 +3,15 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.log4j.Logger;
 import org.json.simple.JSONObject;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 
 /**
  * Created by sinash on 3/28/17.
  */
 public class ClientRunner {
 
+    private static Map<TopicPartition, OffsetAndMetadata> currentOffsets;
+    private static KafkaConsumer<String, String> consumer;
 
     public static void main(String[] args) {
 
@@ -29,10 +28,10 @@ public class ClientRunner {
         kafkaProps.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
         kafkaProps.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
 
-        KafkaConsumer<String, String> consumer = new KafkaConsumer<String, String>(kafkaProps);
+        consumer = new KafkaConsumer<String, String>(kafkaProps);
 
         //subscribe to the topic
-        consumer.subscribe(Collections.singletonList(args[0]));
+        consumer.subscribe(Collections.singletonList(args[0]), new RebalanceHandler());
 
 
         // The Poll loop
@@ -51,22 +50,25 @@ public class ClientRunner {
                     custCountryMap.put(record.value(), updatedCount);
                     JSONObject json = new JSONObject(custCountryMap);
                     System.out.println(json.toString());
+
+                    currentOffsets.put(new TopicPartition(record.topic(), record.partition()), new OffsetAndMetadata(record.offset()));
                 }
                 if (args[1].equalsIgnoreCase("sync")) {
 
                     try {
-                        consumer.commitSync(); //This is a synchronous commits and will block until either the commit succeeds or an unrecoverable error is encountered
+                        consumer.commitSync(currentOffsets); //This is a synchronous commits and will block until either the commit succeeds or an unrecoverable error is encountered
                     } catch (CommitFailedException e) {
                         log.error("Commit Failed, " + e);
                     }
                 } else if (args[1].equalsIgnoreCase("async")) {
                     try {
                         consumer.commitAsync();
-                    } catch (CommitFailedException e) {
+                    } catch (Exception e) {
                         log.error("Commit Failed, " + e);
                     }
                 } else if (args[1].equalsIgnoreCase("async-callback")) {
-                    consumer.commitAsync(new OffsetCommitCallback() {
+
+                    consumer.commitAsync(currentOffsets, new OffsetCommitCallback() {
                         public void onComplete(Map<TopicPartition, OffsetAndMetadata> offsets, Exception exception) {
                             if (exception != null) {
 
@@ -81,12 +83,25 @@ public class ClientRunner {
 
         } finally {
             try {
-                consumer.commitSync(); //make sure the commits are received by the broker before shutdown
+                consumer.commitSync(currentOffsets); //make sure the commits are received by the broker before shutdown
             } finally {
                 consumer.close();
             }
         }
 
+    }
+
+    private static class RebalanceHandler implements ConsumerRebalanceListener {
+
+        public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
+
+        }
+
+        public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
+
+            consumer.commitSync(currentOffsets);
+
+        }
     }
 
 }
